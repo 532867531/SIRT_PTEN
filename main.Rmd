@@ -1,0 +1,11 @@
+---
+title: "30-70main"
+output: html_document
+---
+## Including Plots
+
+You can also embed plots, for example:
+```{r pressure, echo=FALSE,warning=FALSE,message=FALSE}
+knitr::opts_knit$set(root.dir = 'E:/src/r/SIRT_PTEN') 
+source(file = "main.R",encoding = "GB2312")      
+```
