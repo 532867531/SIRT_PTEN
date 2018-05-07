@@ -127,7 +127,6 @@ gogogo=function(cohortIndex){
     thenumberrows=LaF::determine_nlines(filename = onefile);thenumberrows
     library(readr);library(data.table);library(reader)
     theonefile=readr::read_delim(file = onefile,col_names = TRUE,delim =  "\t",trim_ws = FALSE,guess_max = 0,comment = "#",quote = "\"")
-    
     #theonefile=read.delim(file = onefile,sep = "\t",header = TRUE)
     theonefile=as.data.frame(theonefile)
     if(NROW(theonefile)!=thenumberrows-1){message(paste(NROW(theonefile),"!=",thenumberrows-1));stop()}else{print(paste("行数相符，为",thenumberrows))}
@@ -135,14 +134,25 @@ gogogo=function(cohortIndex){
   }
   data_mutation=unique(data_mutation)
   
+  ##读取临床信息文件
+  files_clinical=list.files(path=getwd(),pattern = "^data_bcr_clinical_data_patient",all.files = TRUE,full.names = TRUE,ignore.case = TRUE)
+  data_clinical=read.csv(file=files_clinical[1],header = TRUE,skip = 4,sep="\t",stringsAsFactors = FALSE)
   ##查看突变的P53类型
   data_mutation_selected=data_mutation[which(data_mutation$Hugo_Symbol=="TP53"),]
   data_mutation_selected=data_mutation_selected[which(data_mutation_selected$Variant_Classification %in% c("Missense_Mutation")),]
   sample_data_mutation_selected=data_mutation_selected$Tumor_Sample_Barcode
-  
+  message(paste("P53 Missense Mutation 突变的Sample有：",length(sample_data_mutation_selected),"个",sample_data_mutation_selected,"unique",length(unique(sample_data_mutation_selected)),"个",collapse="\n"))
+  tryCatch({
+    write.csv(file = "E:/src/r/SIRT_PTEN/data_mutation.csv",x=data_mutation);
+    write.csv(file = "E:/src/r/SIRT_PTEN/data_clinical.csv",x=data_clinical);
+    file.copy(from = "data_bcr_clinical_data_sample.txt",to="E:/src/r/SIRT_PTEN/data_sample.csv",overwrite = TRUE);
+    A=data.frame(a=c(1,2,3),b=c(4,5,0));fix(A)
+  },error=function(x){print(x)},finally = function(x){file.remove(c("E:/src/r/SIRT_PTEN/data_mutation.csv","E:/src/r/SIRT_PTEN/data_clinical.csv","E:/src/r/SIRT_PTEN/data_sample.csv"))})
   ####进行二条件组合样品:交叉高低表达（以整个cohort为参照）和突变
-  names_sample_low_mutated_selected=unique(intersect(names_sample_low_selected,sample_data_mutation_selected));names_sample_low_mutated_selected
-  names_sample_high_mutated_selected=unique(intersect(names_sample_high_selected,sample_data_mutation_selected));names_sample_high_mutated_selected
+  names_sample_low_mutated_selected=unique(intersect(names_sample_low_selected,sample_data_mutation_selected));
+  message(names_sample_low_mutated_selected)
+  names_sample_high_mutated_selected=unique(intersect(names_sample_high_selected,sample_data_mutation_selected));
+  message(names_sample_high_mutated_selected)
   
   final_patientid_low_mutated_selected=stringi::stri_extract(str=names_sample_low_mutated_selected,regex = "^.*(?=-\\d\\d$)");final_patientid_low_mutated_selected
   final_patientid_high_mutated_selected=stringi::stri_extract(str=names_sample_high_mutated_selected,regex = "^.*(?=-\\d\\d$)");final_patientid_high_mutated_selected
@@ -151,25 +161,42 @@ gogogo=function(cohortIndex){
   
   ###############################################################################################
   ################从突变的样本中选取高表达和低表达的样本
-  #data_expression_sample_data_mutation_selected=data2use[sample_data_mutation_selected,]
-  ##查看突变群体的分布
-  
-  
-  
-  
-  ##从突变的样本中选取高表达和低表达的样本END
-  
-  
+  tryCatch({
+  data_expression_sample_data_mutation_selected=data2use[which(rownames(data2use) %in% sample_data_mutation_selected),]
+  #fix(data_expression_sample_data_mutation_selected)
+  data_within_mutation_high=data_expression_sample_data_mutation_selected[as.numeric(which(data_expression_sample_data_mutation_selected>=quantile(data_expression_sample_data_mutation_selected,high_percentile)))]
+  data_within_mutation_low=data_expression_sample_data_mutation_selected[as.numeric(which(data_expression_sample_data_mutation_selected<=quantile(data_expression_sample_data_mutation_selected,low_percentile)))]
+  #######
+        data_within_mutation_high=data.frame(data_within_mutation_high);colnames(data_within_mutation_high)[1]="value";data_within_mutation_high[,"GROUP"]="high"
+        data_within_mutation_low=data.frame(data_within_mutation_low,GROUP="low");colnames(data_within_mutation_low)[1]="value";data_within_mutation_low[,"GROUP"]="low"
+        ##画图表明有差异，后续需要和正常组织的对比gtex
+        data_boxplot_2=rbind(data_within_mutation_high,data_within_mutation_low)
+        library(ggplot2) #调用ggplot软件包
+        p1<-ggplot(data_boxplot_2,aes(x=factor(GROUP),y=value))+ggtitle(thecohort,subtitle = paste("<=",low_percentile,">=",high_percentile,sep=""))
+        p1=p1+geom_boxplot(col="blue",pch=16,cex=1)+ylab(getGene)+geom_point(position="jitter",col=2,pch=16,cex=1)
+        plot(p1)
+  sample_data_within_mutation_high=rownames(data_within_mutation_high)
+  sample_data_within_mutation_low=rownames(data_within_mutation_low)
+  ##查看突变群体的分布与整个cohort表达的分布的相对位置
+  library(ggpubr)
+  data_expression_distribution_tri=as.data.frame(data2use);colnames(data_expression_distribution_tri)="value";
+  data_expression_distribution_tri[,"group"]="other";
+  data_expression_distribution_tri[sample_data_within_mutation_high,"group"]="withinmutationhigh"
+  data_expression_distribution_tri[sample_data_within_mutation_low,"group"]="withinmutationlow"
+  g1=ggdensity(data = data_expression_distribution_tri,x="value",color = "group",xlab = "Rsem of Sitr1",title = paste(thecohort,"查看突变样品的sirt1的表达值在整个cohort中的分布"))
+  plot(g1)
+  ##从突变的样本中选取高表达和低表达的样本END,等待从后边调取临床数据，标记%%%
+  final_patientid_low_mutated_selected_within=stringi::stri_extract(str=sample_data_within_mutation_high,regex = "^.*(?=-\\d\\d$)");final_patientid_low_mutated_selected
+  final_patientid_high_mutated_selected_within=stringi::stri_extract(str=sample_data_within_mutation_low,regex = "^.*(?=-\\d\\d$)");final_patientid_high_mutated_selected
+  },error=function(x){print(x)})
   ###############################################################################################
-  ##读取临床信息文件
-  files_clinical=list.files(path=getwd(),pattern = "^data_bcr_clinical_data_patient",all.files = TRUE,full.names = TRUE,ignore.case = TRUE)
-  data_clinical=read.csv(file=files_clinical[1],header = TRUE,skip = 4,sep="\t",stringsAsFactors = FALSE)
   ###############################################################################################
   ####先不划生存曲线，先划boxplot或者做出个四格表
   #data_clinical$OS_STATUS可以看同时期比例生存和死亡的比例而不加入时间因素
   #unique(data_clinical$OS_MONTHS)
   #data_clinical$DFS_STATUS
   #data_clinical$DFS_MONTHS
+tryCatch({
   OS_STARTUS_final_patientid_mutated_selected=list()
   OS_STARTUS_final_patientid_mutated_selected[["low"]]=data_clinical[which(data_clinical$PATIENT_ID %in%  final_patientid_low_mutated_selected),"OS_STATUS"]
   OS_STARTUS_final_patientid_mutated_selected[["high"]]=data_clinical[which(data_clinical$PATIENT_ID %in%  final_patientid_high_mutated_selected),"OS_STATUS"]
@@ -178,7 +205,6 @@ gogogo=function(cohortIndex){
   status=sort(status,decreasing = FALSE);print(status);
   group=c("high","low")
   fourfoldTable= data.frame(matrix(nrow = length(group),ncol = length(status),dimnames = list(group,status)),stringsAsFactors = FALSE)
-tryCatch({
     for(rowindex in c(1:length(OS_STARTUS_final_patientid_mutated_selected))){
         for(colindex in c(1:length(status))){
           fourfoldTable[rowindex,colindex]=length(which(OS_STARTUS_final_patientid_mutated_selected[[rownames(fourfoldTable)[rowindex]]]==colnames(fourfoldTable)[colindex]))
@@ -195,6 +221,7 @@ tryCatch({
 message(x)
 })
 ###试图绘制生存曲线
+  tryCatch({
   OS_SURVIVAL_final_patientid_mutated_selected=list()
   OS_SURVIVAL_final_patientid_mutated_selected[["low"]]=data_clinical[which(data_clinical$PATIENT_ID %in%  final_patientid_low_mutated_selected),c("OS_MONTHS","OS_STATUS")]
   OS_SURVIVAL_final_patientid_mutated_selected[["high"]]=data_clinical[which(data_clinical$PATIENT_ID %in%  final_patientid_high_mutated_selected),c("OS_MONTHS","OS_STATUS")]
@@ -205,7 +232,6 @@ message(x)
   #OS_SURVIVAL_final_patientid_mutated_selected[["high"]][,"GROUP"]="high"
   rbind_OS_SURVIVAL_final_patientid_mutated_selected<<-rbind(OS_SURVIVAL_final_patientid_mutated_selected[["low"]],OS_SURVIVAL_final_patientid_mutated_selected[["high"]])
   rbind_OS_SURVIVAL_final_patientid_mutated_selected$OS_MONTHS<<-as.numeric(rbind_OS_SURVIVAL_final_patientid_mutated_selected$OS_MONTHS)
-  tryCatch({
       library(survival)
      # attach(rbind_OS_SURVIVAL_final_patientid_mutated_selected,warn.conflicts = FALSE)
       kmfit1 <- survfit(Surv(OS_MONTHS,OS_STATUS=='DECEASED')~GROUP,data = rbind_OS_SURVIVAL_final_patientid_mutated_selected)
@@ -228,11 +254,72 @@ message(x)
     #detach(rbind_OS_SURVIVAL_final_patientid_mutated_selected)
   }
   )
+  ##############标记%%%,对突变的内部分组的基因再来一遍###########################################
+  ###############################################################################################
+  ###############################################################################################
+  tryCatch({
+  OS_STARTUS_final_patientid_mutated_selected_WITHIN=list()
+  OS_STARTUS_final_patientid_mutated_selected_WITHIN[["low"]]=data_clinical[which(data_clinical$PATIENT_ID %in% final_patientid_high_mutated_selected_within),"OS_STATUS"]
+  OS_STARTUS_final_patientid_mutated_selected_WITHIN[["high"]]=data_clinical[which(data_clinical$PATIENT_ID %in%  final_patientid_low_mutated_selected_within),"OS_STATUS"]
+  library(DT)#####这个包可以在html中嵌入table
+  status=unique(unlist(OS_STARTUS_final_patientid_mutated_selected_WITHIN));print(status)
+  status=sort(status,decreasing = FALSE);print(status);
+  group=c("high","low")
+  fourfoldTable_within= data.frame(matrix(nrow = length(group),ncol = length(status),dimnames = list(group,status)),stringsAsFactors = FALSE)
+    for(rowindex in c(1:length(OS_STARTUS_final_patientid_mutated_selected_WITHIN))){
+      for(colindex in c(1:length(status))){
+        fourfoldTable_within[rowindex,colindex]=length(which(OS_STARTUS_final_patientid_mutated_selected_WITHIN[[rownames(fourfoldTable)[rowindex]]]==colnames(fourfoldTable)[colindex]))
+      }
+    }
+    fourfoldplot(x=as.matrix(fourfoldTable_within), color = c("#99CCFF", "#6699CC"),
+                 conf.level = 0.95,
+                 std = c("margins"),
+                 margin = c(1), space = 0.2, main = paste(thecohort,"\n以突变的样本为总体按照表达高低进行分组")
+    )
+    
+  }        
+  ,error=function(x){
+    message(x)
+  })
+  ###试图绘制生存曲线
+  tryCatch({
+  OS_SURVIVAL_final_patientid_mutated_selected_within=list()
+  OS_SURVIVAL_final_patientid_mutated_selected_within[["low"]]=data_clinical[which(data_clinical$PATIENT_ID %in%  final_patientid_low_mutated_selected_within),c("OS_MONTHS","OS_STATUS")]
+  OS_SURVIVAL_final_patientid_mutated_selected_within[["high"]]=data_clinical[which(data_clinical$PATIENT_ID %in%  final_patientid_high_mutated_selected_within),c("OS_MONTHS","OS_STATUS")]
+  library(tibble)
+  OS_SURVIVAL_final_patientid_mutated_selected_within[["low"]]=add_column(OS_SURVIVAL_final_patientid_mutated_selected_within[["low"]],GROUP="LOW")
+  OS_SURVIVAL_final_patientid_mutated_selected_within[["high"]]=add_column(OS_SURVIVAL_final_patientid_mutated_selected_within[["high"]],GROUP="HIGH")
+  #OS_SURVIVAL_final_patientid_mutated_selected[["low"]][,"GROUP"]="low"
+  #OS_SURVIVAL_final_patientid_mutated_selected[["high"]][,"GROUP"]="high"
+  rbind_OS_SURVIVAL_final_patientid_mutated_selected_within<<-rbind(OS_SURVIVAL_final_patientid_mutated_selected_within[["low"]],OS_SURVIVAL_final_patientid_mutated_selected_within[["high"]])
+  rbind_OS_SURVIVAL_final_patientid_mutated_selected_within$OS_MONTHS<<-as.numeric(rbind_OS_SURVIVAL_final_patientid_mutated_selected_within$OS_MONTHS)
+    library(survival)
+    # attach(rbind_OS_SURVIVAL_final_patientid_mutated_selected,warn.conflicts = FALSE)
+    kmfit2 <- survfit(Surv(OS_MONTHS,OS_STATUS=='DECEASED')~GROUP,data = rbind_OS_SURVIVAL_final_patientid_mutated_selected_within)
+    summary(kmfit2)
+    plot(kmfit2,main = "以突变的样本为总体按照表达高低进行分组")
+  },error=function(x){message(x)},finally = function(x){
+    #detach(rbind_OS_SURVIVAL_final_patientid_mutated_selected)
+  }
+  )
+  
+  tryCatch({
+    library(survminer)
+    library(ggplot2)
+    q3=ggsurvplot(kmfit2,conf.int = TRUE, pval = TRUE, pval.method = TRUE,
+                  risk.table = TRUE,title="以突变的样本为总体按照表达高低进行分组",cumcensor = TRUE)
+    plot(q3[["plot"]]);plot(q3[["table"]],ylim = 3)
+    
+    #print(survdiff(Surv(OS_MONTHS,OS_STATUS=='DECEASED')~GROUP,data = rbind_OS_SURVIVAL_final_patientid_mutated_selected ))
+  },error=function(x){message(x)},finally = function(x){
+    #detach(rbind_OS_SURVIVAL_final_patientid_mutated_selected)
+  }
+  )
   
   setwd(PATH_PROJECT)  
 }
 ##载入合并的临床信息
 load("data_clinical_all.save")
-for(index in c(1:nrow(FILE_EXPRESSION))){
+for(index in c(20:nrow(FILE_EXPRESSION))){
   gogogo(index)
 }
